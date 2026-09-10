@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>AI Study Assistant</title>
+
+</head>
+
+
+<body>
+
+    <h1>
+        AI Study Assistant
+    </h1>
+
+
+    <p>
+        Upload your study document and ask questions.
+    </p>
+
+
+    <hr>
+
+
+    <h2>
+        Upload Document
+    </h2>
+
+
+    <input
+        type="file"
+        id="document"
+        accept=".pdf,application/pdf"
+    >
+
+
+    <button id="uploadButton">
+        Upload PDF
+    </button>
+
+
+    <p id="uploadStatus">
+        No document uploaded yet.
+    </p>
+
+
+    <hr>
+
+
+    <h2>
+        Ask AI
+    </h2>
+
+
+    <input
+        type="text"
+        id="question"
+        placeholder="Enter your question"
+        size="50"
+    >
+
+
+    <button id="askButton">
+        Ask AI
+    </button>
+
+
+    <h3>
+        AI Response:
+    </h3>
+
+
+    <p id="response">
+        AI response will appear here...
+    </p>
+
+
+    <!-- Tesseract.js -->
+    <script
+        src="https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js">
+    </script>
+
+
+    <!-- Application JavaScript -->
+    <script
+        type="module"
+        src="ai.js">
+    </script>
+
+</body>
+
+</html>
