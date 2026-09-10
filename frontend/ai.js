@@ -1,4 +1,7 @@
-import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
+```javascript
+import * as pdfjsLib from
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
+
 
 // =====================================================
 // RAILWAY BACKEND
@@ -7,20 +10,37 @@ import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38
 const API_BASE =
     "https://ai-study-assistant-production-ce2c.up.railway.app";
 
+
+// =====================================================
+// PDF.JS WORKER
+// =====================================================
+
 pdfjsLib.GlobalWorkerOptions.workerSrc =
     "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+
 
 // =====================================================
 // HTML ELEMENTS
 // =====================================================
 
-const fileInput = document.getElementById("document");
-const uploadButton = document.getElementById("uploadButton");
-const uploadStatus = document.getElementById("uploadStatus");
+const documentInput =
+    document.getElementById("document");
 
-const questionInput = document.getElementById("question");
-const askButton = document.getElementById("askButton");
-const responseBox = document.getElementById("response");
+const uploadButton =
+    document.getElementById("uploadButton");
+
+const uploadStatus =
+    document.getElementById("uploadStatus");
+
+const questionInput =
+    document.getElementById("question");
+
+const askButton =
+    document.getElementById("askButton");
+
+const responseBox =
+    document.getElementById("response");
+
 
 // =====================================================
 // CURRENT DOCUMENT
@@ -28,243 +48,380 @@ const responseBox = document.getElementById("response");
 
 let currentDocumentId = null;
 
+
 // =====================================================
-// INITIALIZE
+// BACKEND CONNECTION CHECK
 // =====================================================
 
-async function initialize() {
+async function checkBackend() {
+
     try {
-        uploadStatus.textContent = "Connecting to AI Study Assistant...";
 
-        const response = await fetch(`${API_BASE}/`);
+        const response =
+            await fetch(API_BASE);
 
         if (!response.ok) {
-            throw new Error("Backend is not responding.");
+            throw new Error("Backend unavailable");
         }
 
-        const data = await response.json();
-
-        console.log("Backend:", data);
-
-        await loadLatestDocument();
+        uploadStatus.textContent =
+            "Backend connected.";
 
     } catch (error) {
-        console.error(error);
+
+        console.error(
+            "Backend connection error:",
+            error
+        );
 
         uploadStatus.textContent =
-            "Backend connection failed. Please try again.";
+            "Backend connection failed.";
+
     }
+
 }
+
 
 // =====================================================
 // LOAD LATEST DOCUMENT
 // =====================================================
 
 async function loadLatestDocument() {
+
     try {
+
         const response =
-            await fetch(`${API_BASE}/api/documents/latest`);
+            await fetch(
+                `${API_BASE}/api/documents/latest`
+            );
 
         if (!response.ok) {
-            uploadStatus.textContent =
-                "Backend connected. No document uploaded yet.";
             return;
         }
 
-        const data = await response.json();
+        const data =
+            await response.json();
 
-        currentDocumentId = data.id;
+        if (data && data.id) {
 
-        uploadStatus.textContent =
-            `Current document: ${data.file_name}`;
+            currentDocumentId =
+                data.id;
 
-        console.log("Latest document:", data);
+            uploadStatus.textContent =
+                `Latest document: ${data.file_name}`;
+
+        }
 
     } catch (error) {
-        console.error("Latest document error:", error);
 
-        uploadStatus.textContent =
-            "Backend connected.";
+        console.log(
+            "No latest document loaded."
+        );
+
     }
+
 }
+
 
 // =====================================================
 // UPLOAD PDF
 // =====================================================
 
-uploadButton.addEventListener("click", async () => {
+uploadButton.addEventListener(
+    "click",
+    async () => {
 
-    const file = fileInput.files[0];
+        const file =
+            documentInput.files[0];
 
-    if (!file) {
-        uploadStatus.textContent =
-            "Please select a PDF file first.";
-        return;
-    }
+        if (!file) {
 
-    if (file.type !== "application/pdf" &&
-        !file.name.toLowerCase().endsWith(".pdf")) {
+            uploadStatus.textContent =
+                "Please select a PDF first.";
 
-        uploadStatus.textContent =
-            "Only PDF files are allowed.";
+            return;
+        }
 
-        return;
-    }
 
-    try {
+        if (
+            file.type !== "application/pdf" &&
+            !file.name.toLowerCase().endsWith(".pdf")
+        ) {
+
+            uploadStatus.textContent =
+                "Please select a PDF file.";
+
+            return;
+        }
+
 
         uploadButton.disabled = true;
 
         uploadStatus.textContent =
             "Uploading PDF...";
 
-        const formData = new FormData();
+        responseBox.textContent =
+            "Please wait...";
 
-        formData.append("document", file);
 
-        // =================================================
-        // SEND PDF TO RAILWAY BACKEND
-        // =================================================
+        try {
 
-        const response = await fetch(
-            `${API_BASE}/api/documents/upload`,
-            {
-                method: "POST",
-                body: formData
+            const formData =
+                new FormData();
+
+            formData.append(
+                "document",
+                file
+            );
+
+
+            const response =
+                await fetch(
+                    `${API_BASE}/api/documents/upload`,
+                    {
+                        method: "POST",
+                        body: formData
+                    }
+                );
+
+
+            // =================================================
+            // NORMAL TEXT PDF
+            // =================================================
+
+            if (response.ok) {
+
+                const data =
+                    await response.json();
+
+                if (!data.success) {
+
+                    throw new Error(
+                        data.message ||
+                        "PDF upload failed."
+                    );
+
+                }
+
+
+                currentDocumentId =
+                    data.documentId;
+
+
+                uploadStatus.textContent =
+                    `PDF uploaded successfully. ` +
+                    `Questions found: ${data.questionsFound || 0}`;
+
+
+                responseBox.textContent =
+                    "PDF is ready. Ask a question.";
+
+
+                return;
             }
-        );
 
-        const data = await response.json();
 
-        console.log("Upload response:", data);
+            // =================================================
+            // SCANNED / IMAGE PDF
+            //
+            // Backend returns HTTP 400 when it cannot extract
+            // enough text. We then use browser OCR.
+            // =================================================
 
-        // =================================================
-        // NORMAL TEXT PDF
-        // =================================================
+            if (response.status === 400) {
 
-        if (response.ok && data.success) {
+                let errorData = {};
 
-            currentDocumentId =
-                data.documentId;
+                try {
+
+                    errorData =
+                        await response.json();
+
+                } catch (error) {
+
+                    console.log(
+                        "Could not read backend error JSON."
+                    );
+
+                }
+
+
+                const message =
+                    errorData.message || "";
+
+
+                if (
+                    message.toLowerCase().includes(
+                        "scanned"
+                    ) ||
+                    message.toLowerCase().includes(
+                        "image-only"
+                    ) ||
+                    message.toLowerCase().includes(
+                        "extract enough text"
+                    )
+                ) {
+
+                    uploadStatus.textContent =
+                        "Scanned PDF detected. Starting OCR...";
+
+
+                    await processScannedPDF(file);
+
+
+                    return;
+                }
+
+
+                throw new Error(
+                    message ||
+                    "PDF upload failed."
+                );
+            }
+
+
+            // =================================================
+            // OTHER SERVER ERROR
+            // =================================================
+
+            let errorData = {};
+
+            try {
+
+                errorData =
+                    await response.json();
+
+            } catch (error) {
+
+                console.log(
+                    "Server did not return JSON."
+                );
+
+            }
+
+
+            throw new Error(
+                errorData.message ||
+                `Upload failed. Server returned ${response.status}.`
+            );
+
+
+        } catch (error) {
+
+            console.error(
+                "UPLOAD ERROR:",
+                error
+            );
+
 
             uploadStatus.textContent =
-                `PDF uploaded successfully. ` +
-                `${data.questionsFound || 0} questions found.`;
+                `Upload failed: ${error.message}`;
+
 
             responseBox.textContent =
-                "Document is ready. Ask your question.";
+                "Please try another PDF.";
 
-            return;
+
+        } finally {
+
+            uploadButton.disabled = false;
+
         }
 
-        // =================================================
-        // SCANNED PDF
-        // =================================================
-
-        if (
-            response.status === 400 &&
-            data.message &&
-            data.message.toLowerCase().includes("scanned")
-        ) {
-
-            uploadStatus.textContent =
-                "Scanned PDF detected. Starting browser OCR...";
-
-            await processScannedPDF(file);
-
-            return;
-        }
-
-        // =================================================
-        // OTHER ERROR
-        // =================================================
-
-        uploadStatus.textContent =
-            data.message ||
-            "PDF upload failed.";
-
-    } catch (error) {
-
-        console.error("Upload error:", error);
-
-        uploadStatus.textContent =
-            "Upload failed. Check your internet connection.";
-
-    } finally {
-
-        uploadButton.disabled = false;
     }
-});
+);
+
 
 // =====================================================
-// PROCESS SCANNED PDF USING OCR
+// SCANNED PDF OCR
 // =====================================================
 
 async function processScannedPDF(file) {
 
-    let pdf = null;
     let worker = null;
+
 
     try {
 
-        if (typeof Tesseract === "undefined") {
-
-            throw new Error(
-                "Tesseract.js was not loaded."
-            );
-        }
-
         uploadStatus.textContent =
-            "Reading scanned PDF...";
+            "Reading PDF pages...";
+
 
         const arrayBuffer =
             await file.arrayBuffer();
 
-        pdf =
-            await pdfjsLib.getDocument({
-                data: arrayBuffer
-            }).promise;
+
+        const pdf =
+            await pdfjsLib.getDocument(
+                {
+                    data: arrayBuffer
+                }
+            ).promise;
+
+
+        const totalPages =
+            pdf.numPages;
+
 
         console.log(
             "PDF pages:",
-            pdf.numPages
+            totalPages
         );
 
-        // =================================================
-        // CREATE OCR WORKER
-        // =================================================
-
-        worker =
-            await Tesseract.createWorker("eng");
 
         let completeText = "";
 
+
         // =================================================
-        // OCR PAGE BY PAGE
+        // PROCESS ONE PAGE AT A TIME
         // =================================================
+
+        worker =
+            await Tesseract.createWorker(
+                "eng"
+            );
+
 
         for (
             let pageNumber = 1;
-            pageNumber <= pdf.numPages;
+            pageNumber <= totalPages;
             pageNumber++
         ) {
 
             uploadStatus.textContent =
-                `OCR processing page ${pageNumber} of ${pdf.numPages}...`;
+                `OCR processing page ${pageNumber} of ${totalPages}...`;
+
+
+            console.log(
+                `OCR page ${pageNumber}/${totalPages}`
+            );
+
 
             const page =
-                await pdf.getPage(pageNumber);
+                await pdf.getPage(
+                    pageNumber
+                );
+
 
             const viewport =
-                page.getViewport({
-                    scale: 1.5
-                });
+                page.getViewport(
+                    {
+                        scale: 1.5
+                    }
+                );
+
 
             const canvas =
-                document.createElement("canvas");
+                document.createElement(
+                    "canvas"
+                );
+
 
             const context =
-                canvas.getContext("2d");
+                canvas.getContext(
+                    "2d"
+                );
+
 
             canvas.width =
                 viewport.width;
@@ -272,55 +429,83 @@ async function processScannedPDF(file) {
             canvas.height =
                 viewport.height;
 
-            await page.render({
-                canvasContext: context,
-                viewport: viewport
-            }).promise;
+
+            await page.render(
+                {
+                    canvasContext:
+                        context,
+
+                    viewport:
+                        viewport
+                }
+            ).promise;
+
 
             const result =
                 await worker.recognize(
                     canvas
                 );
 
+
             const pageText =
                 result.data.text || "";
 
-            completeText +=
-                `\n\n--- PAGE ${pageNumber} ---\n\n`;
 
             completeText +=
+                `\n\n--- PAGE ${pageNumber} ---\n\n` +
                 pageText;
+
 
             // Release canvas memory
             canvas.width = 1;
             canvas.height = 1;
+
+
+            console.log(
+                `Page ${pageNumber} OCR characters:`,
+                pageText.length
+            );
+
         }
 
+
         // =================================================
-        // CLEAN OCR TEXT
+        // TERMINATE OCR WORKER
         // =================================================
+
+        await worker.terminate();
+
+        worker = null;
+
 
         completeText =
-            cleanOCRText(completeText);
+            completeText.trim();
+
 
         console.log(
-            "OCR characters:",
+            "Total OCR characters:",
             completeText.length
         );
 
-        if (completeText.length < 20) {
+
+        if (
+            completeText.length < 20
+        ) {
 
             throw new Error(
-                "OCR could not extract enough text."
+                "OCR could not read enough text from this PDF."
             );
+
         }
 
-        uploadStatus.textContent =
-            "OCR complete. Saving document...";
 
         // =================================================
-        // SAVE OCR TEXT
+        // SAVE OCR TEXT TO BACKEND
         // =================================================
+
+        uploadStatus.textContent =
+            "OCR completed. Saving document...";
+
 
         const saveResponse =
             await fetch(
@@ -333,108 +518,132 @@ async function processScannedPDF(file) {
                             "application/json"
                     },
 
-                    body: JSON.stringify({
-                        fileName: file.name,
-                        text: completeText
-                    })
+                    body: JSON.stringify(
+                        {
+                            fileName:
+                                file.name,
+
+                            text:
+                                completeText
+                        }
+                    )
                 }
             );
+
+
+        if (!saveResponse.ok) {
+
+            let saveError = {};
+
+            try {
+
+                saveError =
+                    await saveResponse.json();
+
+            } catch (error) {
+
+                console.log(
+                    "Could not read OCR save error."
+                );
+
+            }
+
+
+            throw new Error(
+                saveError.message ||
+                `OCR save failed (${saveResponse.status}).`
+            );
+
+        }
+
 
         const saveData =
             await saveResponse.json();
 
-        console.log(
-            "OCR save response:",
-            saveData
-        );
 
-        if (!saveResponse.ok ||
-            !saveData.success) {
+        if (!saveData.success) {
 
             throw new Error(
                 saveData.message ||
-                "Could not save OCR text."
+                "Could not save OCR document."
             );
+
         }
+
 
         currentDocumentId =
             saveData.documentId;
 
+
         uploadStatus.textContent =
             `Scanned PDF processed successfully. ` +
-            `${completeText.length.toLocaleString()} characters extracted.`;
+            `Characters: ${completeText.length}`;
+
 
         responseBox.textContent =
-            "Document is ready. Ask your question.";
+            "PDF is ready. Ask a question.";
+
 
     } catch (error) {
 
         console.error(
-            "OCR error:",
+            "OCR ERROR:",
             error
         );
 
-        uploadStatus.textContent =
-            `OCR failed: ${error.message}`;
-
-    } finally {
 
         if (worker) {
 
             try {
+
                 await worker.terminate();
-            } catch (error) {
-                console.error(error);
+
+            } catch (terminateError) {
+
+                console.log(
+                    "OCR worker termination error."
+                );
+
             }
+
         }
 
-        pdf = null;
+
+        throw error;
+
     }
+
 }
 
-// =====================================================
-// CLEAN OCR TEXT
-// =====================================================
-
-function cleanOCRText(text) {
-
-    return text
-
-        .replace(/\r/g, "\n")
-
-        // Remove excessive spaces
-        .replace(/[ \t]+/g, " ")
-
-        // Remove excessive blank lines
-        .replace(/\n{4,}/g, "\n\n")
-
-        .trim();
-}
 
 // =====================================================
 // ASK QUESTION
 // =====================================================
 
-askButton.addEventListener("click", async () => {
+askButton.addEventListener(
+    "click",
+    async () => {
 
-    const question =
-        questionInput.value.trim();
+        const question =
+            questionInput.value.trim();
 
-    if (!question) {
 
-        responseBox.textContent =
-            "Please enter a question.";
+        if (!question) {
 
-        return;
-    }
+            responseBox.textContent =
+                "Please enter a question.";
 
-    // =================================================
-    // MAKE SURE DOCUMENT EXISTS
-    // =================================================
+            return;
+        }
 
-    if (!currentDocumentId) {
 
-        await loadLatestDocument();
+        if (!currentDocumentId) {
+
+            // Try to find latest document
+            await loadLatestDocument();
+
+        }
+
 
         if (!currentDocumentId) {
 
@@ -443,91 +652,141 @@ askButton.addEventListener("click", async () => {
 
             return;
         }
-    }
 
-    try {
 
         askButton.disabled = true;
 
         responseBox.textContent =
             "Searching your document...";
 
-        // =================================================
-        // SEARCH DOCUMENT
-        // =================================================
 
-        const url =
-            `${API_BASE}/api/documents/search` +
-            `?documentId=${encodeURIComponent(currentDocumentId)}` +
-            `&q=${encodeURIComponent(question)}`;
+        try {
 
-        const response =
-            await fetch(url);
+            const url =
+                `${API_BASE}/api/documents/search` +
+                `?documentId=${encodeURIComponent(
+                    currentDocumentId
+                )}` +
+                `&q=${encodeURIComponent(
+                    question
+                )}`;
 
-        const data =
-            await response.json();
 
-        console.log(
-            "Question response:",
-            data
-        );
+            const response =
+                await fetch(url);
 
-        // =================================================
-        // SUCCESS
-        // =================================================
 
-        if (response.ok && data.success) {
+            let data = {};
+
+
+            try {
+
+                data =
+                    await response.json();
+
+            } catch (error) {
+
+                throw new Error(
+                    "Invalid response from server."
+                );
+
+            }
+
+
+            if (!response.ok) {
+
+                throw new Error(
+                    data.message ||
+                    "Could not find an answer."
+                );
+
+            }
+
+
+            if (!data.success) {
+
+                throw new Error(
+                    data.message ||
+                    "No answer found."
+                );
+
+            }
+
+
+            // =================================================
+            // SHOW ANSWER
+            // =================================================
 
             responseBox.textContent =
                 data.answer ||
                 "No answer found.";
 
-            return;
+
+            console.log(
+                "Matched question:",
+                data.matchedQuestion
+            );
+
+
+            console.log(
+                "Search score:",
+                data.score
+            );
+
+
+        } catch (error) {
+
+            console.error(
+                "QUESTION ERROR:",
+                error
+            );
+
+
+            responseBox.textContent =
+                error.message ||
+                "Could not get an answer.";
+
+        } finally {
+
+            askButton.disabled = false;
+
         }
 
-        // =================================================
-        // NO ANSWER
-        // =================================================
-
-        responseBox.textContent =
-            data.message ||
-            "No relevant information found.";
-
-    } catch (error) {
-
-        console.error(
-            "Question error:",
-            error
-        );
-
-        responseBox.textContent =
-            "Could not connect to the backend.";
-
-    } finally {
-
-        askButton.disabled = false;
     }
-});
+);
+
 
 // =====================================================
-// ENTER KEY → ASK
+// PRESS ENTER TO ASK
 // =====================================================
 
 questionInput.addEventListener(
     "keydown",
     (event) => {
 
-        if (event.key === "Enter") {
-
-            event.preventDefault();
+        if (
+            event.key === "Enter"
+        ) {
 
             askButton.click();
+
         }
+
     }
 );
 
+
 // =====================================================
-// START
+// START APPLICATION
 // =====================================================
 
-initialize();
+async function startApp() {
+
+    await checkBackend();
+
+    await loadLatestDocument();
+
+}
+
+
+startApp();
