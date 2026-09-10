@@ -1,119 +1,132 @@
-import * as pdfjsLib from
-    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
+import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
 
+// =====================================================
+// RAILWAY BACKEND
+// =====================================================
 
-// ============================================================
-// BACKEND URL
-// ============================================================
-
-const API_BASE = "http://localhost:5000";
-
-
-// ============================================================
-// PDF.JS WORKER
-// ============================================================
+const API_BASE =
+    "https://ai-study-assistant-production-ce2c.up.railway.app";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
     "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
 
-
-// ============================================================
-// ACTIVE DOCUMENT
-// ============================================================
-
-let activeDocumentId = null;
-
-
-// ============================================================
+// =====================================================
 // HTML ELEMENTS
-// ============================================================
+// =====================================================
 
-const fileInput =
-    document.getElementById("document");
+const fileInput = document.getElementById("document");
+const uploadButton = document.getElementById("uploadButton");
+const uploadStatus = document.getElementById("uploadStatus");
 
-const uploadButton =
-    document.getElementById("uploadButton");
+const questionInput = document.getElementById("question");
+const askButton = document.getElementById("askButton");
+const responseBox = document.getElementById("response");
 
-const uploadStatus =
-    document.getElementById("uploadStatus");
+// =====================================================
+// CURRENT DOCUMENT
+// =====================================================
 
-const questionInput =
-    document.getElementById("question");
+let currentDocumentId = null;
 
-const askButton =
-    document.getElementById("askButton");
+// =====================================================
+// INITIALIZE
+// =====================================================
 
-const responseElement =
-    document.getElementById("response");
-
-
-// ============================================================
-// LOAD LATEST DOCUMENT
-// ============================================================
-
-async function loadLatestDocument() {
-
+async function initialize() {
     try {
+        uploadStatus.textContent = "Connecting to AI Study Assistant...";
 
-        const response =
-            await fetch(
-                `${API_BASE}/api/documents/latest`
-            );
+        const response = await fetch(`${API_BASE}/`);
 
         if (!response.ok) {
-
-            activeDocumentId = null;
-
-            uploadStatus.textContent =
-                "No document uploaded yet.";
-
-            return;
+            throw new Error("Backend is not responding.");
         }
 
-        const data =
-            await response.json();
+        const data = await response.json();
 
-        if (data && data.id) {
+        console.log("Backend:", data);
 
-            activeDocumentId =
-                data.id;
-
-            uploadStatus.textContent =
-                `Using document: ${data.file_name}`;
-        }
+        await loadLatestDocument();
 
     } catch (error) {
-
-        console.error(
-            "Latest document error:",
-            error
-        );
+        console.error(error);
 
         uploadStatus.textContent =
-            "Backend is not connected.";
+            "Backend connection failed. Please try again.";
     }
 }
 
+// =====================================================
+// LOAD LATEST DOCUMENT
+// =====================================================
 
-// ============================================================
-// NORMAL PDF UPLOAD
-// ============================================================
+async function loadLatestDocument() {
+    try {
+        const response =
+            await fetch(`${API_BASE}/api/documents/latest`);
 
-async function uploadNormalPDF(file) {
+        if (!response.ok) {
+            uploadStatus.textContent =
+                "Backend connected. No document uploaded yet.";
+            return;
+        }
 
-    const formData =
-        new FormData();
+        const data = await response.json();
 
-    formData.append(
-        "document",
-        file
-    );
+        currentDocumentId = data.id;
 
-    uploadStatus.textContent =
-        "Checking PDF text...";
+        uploadStatus.textContent =
+            `Current document: ${data.file_name}`;
 
-    const response =
-        await fetch(
+        console.log("Latest document:", data);
+
+    } catch (error) {
+        console.error("Latest document error:", error);
+
+        uploadStatus.textContent =
+            "Backend connected.";
+    }
+}
+
+// =====================================================
+// UPLOAD PDF
+// =====================================================
+
+uploadButton.addEventListener("click", async () => {
+
+    const file = fileInput.files[0];
+
+    if (!file) {
+        uploadStatus.textContent =
+            "Please select a PDF file first.";
+        return;
+    }
+
+    if (file.type !== "application/pdf" &&
+        !file.name.toLowerCase().endsWith(".pdf")) {
+
+        uploadStatus.textContent =
+            "Only PDF files are allowed.";
+
+        return;
+    }
+
+    try {
+
+        uploadButton.disabled = true;
+
+        uploadStatus.textContent =
+            "Uploading PDF...";
+
+        const formData = new FormData();
+
+        formData.append("document", file);
+
+        // =================================================
+        // SEND PDF TO RAILWAY BACKEND
+        // =================================================
+
+        const response = await fetch(
             `${API_BASE}/api/documents/upload`,
             {
                 method: "POST",
@@ -121,752 +134,400 @@ async function uploadNormalPDF(file) {
             }
         );
 
-    let data;
+        const data = await response.json();
 
-    try {
+        console.log("Upload response:", data);
 
-        data =
-            await response.json();
+        // =================================================
+        // NORMAL TEXT PDF
+        // =================================================
 
-    } catch {
+        if (response.ok && data.success) {
 
-        throw new Error(
-            "Invalid response from backend."
-        );
-    }
+            currentDocumentId =
+                data.documentId;
 
-    if (!response.ok) {
+            uploadStatus.textContent =
+                `PDF uploaded successfully. ` +
+                `${data.questionsFound || 0} questions found.`;
 
-        const error =
-            new Error(
-                data.message ||
-                "PDF upload failed."
-            );
+            responseBox.textContent =
+                "Document is ready. Ask your question.";
 
-        error.scanned =
-            data.scanned === true;
+            return;
+        }
 
-        throw error;
-    }
+        // =================================================
+        // SCANNED PDF
+        // =================================================
 
-    return data;
-}
+        if (
+            response.status === 400 &&
+            data.message &&
+            data.message.toLowerCase().includes("scanned")
+        ) {
 
+            uploadStatus.textContent =
+                "Scanned PDF detected. Starting browser OCR...";
 
-// ============================================================
-// RENDER PDF PAGE
-// ============================================================
+            await processScannedPDF(file);
 
-async function renderPDFPage(page) {
+            return;
+        }
 
-    /*
-        Higher scale = better OCR quality.
+        // =================================================
+        // OTHER ERROR
+        // =================================================
 
-        2.0 is a good balance between:
-        - OCR accuracy
-        - RAM usage
-        - browser performance
-    */
+        uploadStatus.textContent =
+            data.message ||
+            "PDF upload failed.";
 
-    const scale = 2.0;
+    } catch (error) {
 
-    const viewport =
-        page.getViewport({
-            scale: scale
-        });
+        console.error("Upload error:", error);
 
-    const canvas =
-        document.createElement("canvas");
-
-    const context =
-        canvas.getContext("2d", {
-            willReadFrequently: true
-        });
-
-    canvas.width =
-        Math.floor(viewport.width);
-
-    canvas.height =
-        Math.floor(viewport.height);
-
-    await page.render({
-
-        canvasContext:
-            context,
-
-        viewport:
-            viewport
-
-    }).promise;
-
-    return canvas;
-}
-
-
-// ============================================================
-// OCR ONE PAGE
-// ============================================================
-
-async function ocrPage(
-    worker,
-    page,
-    pageNumber,
-    totalPages
-) {
-
-    uploadStatus.textContent =
-        `OCR: processing page ${pageNumber} of ${totalPages}...`;
-
-    console.log(
-        `OCR page ${pageNumber}/${totalPages}`
-    );
-
-    const canvas =
-        await renderPDFPage(page);
-
-    try {
-
-        const result =
-            await worker.recognize(
-                canvas
-            );
-
-        const text =
-            (
-                result?.data?.text ||
-                ""
-            ).trim();
-
-        console.log(
-            `Page ${pageNumber}: ${text.length} characters`
-        );
-
-        return text;
+        uploadStatus.textContent =
+            "Upload failed. Check your internet connection.";
 
     } finally {
 
-        /*
-            Free canvas memory after each page.
-        */
-
-        canvas.width = 1;
-        canvas.height = 1;
+        uploadButton.disabled = false;
     }
-}
+});
 
+// =====================================================
+// PROCESS SCANNED PDF USING OCR
+// =====================================================
 
-// ============================================================
-// OCR ENTIRE PDF
-// ============================================================
+async function processScannedPDF(file) {
 
-async function performOCR(file) {
-
-    uploadStatus.textContent =
-        "Loading PDF for OCR...";
-
-    console.log(
-        "Starting OCR..."
-    );
-
-    if (
-        typeof Tesseract ===
-        "undefined"
-    ) {
-
-        throw new Error(
-            "Tesseract.js failed to load."
-        );
-    }
-
-    // --------------------------------------------------------
-    // LOAD PDF
-    // --------------------------------------------------------
-
-    const arrayBuffer =
-        await file.arrayBuffer();
-
-    const pdf =
-        await pdfjsLib
-            .getDocument({
-                data: arrayBuffer
-            })
-            .promise;
-
-    const totalPages =
-        pdf.numPages;
-
-    console.log(
-        "Total pages:",
-        totalPages
-    );
-
-
-    // --------------------------------------------------------
-    // CREATE OCR WORKER
-    // --------------------------------------------------------
-
-    uploadStatus.textContent =
-        "Starting OCR engine...";
-
-    const worker =
-        await Tesseract.createWorker(
-            "eng"
-        );
-
-
-    const pageTexts = [];
-
-    let totalCharacters = 0;
-
+    let pdf = null;
+    let worker = null;
 
     try {
 
-        // ----------------------------------------------------
-        // PROCESS EVERY PAGE
-        // ----------------------------------------------------
+        if (typeof Tesseract === "undefined") {
+
+            throw new Error(
+                "Tesseract.js was not loaded."
+            );
+        }
+
+        uploadStatus.textContent =
+            "Reading scanned PDF...";
+
+        const arrayBuffer =
+            await file.arrayBuffer();
+
+        pdf =
+            await pdfjsLib.getDocument({
+                data: arrayBuffer
+            }).promise;
+
+        console.log(
+            "PDF pages:",
+            pdf.numPages
+        );
+
+        // =================================================
+        // CREATE OCR WORKER
+        // =================================================
+
+        worker =
+            await Tesseract.createWorker("eng");
+
+        let completeText = "";
+
+        // =================================================
+        // OCR PAGE BY PAGE
+        // =================================================
 
         for (
             let pageNumber = 1;
-            pageNumber <= totalPages;
+            pageNumber <= pdf.numPages;
             pageNumber++
         ) {
 
+            uploadStatus.textContent =
+                `OCR processing page ${pageNumber} of ${pdf.numPages}...`;
+
             const page =
-                await pdf.getPage(
-                    pageNumber
+                await pdf.getPage(pageNumber);
+
+            const viewport =
+                page.getViewport({
+                    scale: 1.5
+                });
+
+            const canvas =
+                document.createElement("canvas");
+
+            const context =
+                canvas.getContext("2d");
+
+            canvas.width =
+                viewport.width;
+
+            canvas.height =
+                viewport.height;
+
+            await page.render({
+                canvasContext: context,
+                viewport: viewport
+            }).promise;
+
+            const result =
+                await worker.recognize(
+                    canvas
                 );
 
-            const text =
-                await ocrPage(
-                    worker,
-                    page,
-                    pageNumber,
-                    totalPages
-                );
+            const pageText =
+                result.data.text || "";
 
+            completeText +=
+                `\n\n--- PAGE ${pageNumber} ---\n\n`;
 
-            /*
-                IMPORTANT:
+            completeText +=
+                pageText;
 
-                Do NOT add:
+            // Release canvas memory
+            canvas.width = 1;
+            canvas.height = 1;
+        }
 
-                --- PAGE 1 ---
+        // =================================================
+        // CLEAN OCR TEXT
+        // =================================================
 
-                because those page markers were causing
-                your database to contain fake text.
-            */
+        completeText =
+            cleanOCRText(completeText);
 
-            if (
-                text.length > 5
-            ) {
+        console.log(
+            "OCR characters:",
+            completeText.length
+        );
 
-                pageTexts.push(
-                    text
-                );
+        if (completeText.length < 20) {
 
-                totalCharacters +=
-                    text.length;
-            }
-
-
-            // Release page reference
-            page.cleanup();
-
-
-            // Give browser time to breathe
-            await new Promise(
-                resolve =>
-                    setTimeout(
-                        resolve,
-                        20
-                    )
+            throw new Error(
+                "OCR could not extract enough text."
             );
         }
 
+        uploadStatus.textContent =
+            "OCR complete. Saving document...";
+
+        // =================================================
+        // SAVE OCR TEXT
+        // =================================================
+
+        const saveResponse =
+            await fetch(
+                `${API_BASE}/api/documents/text`,
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        fileName: file.name,
+                        text: completeText
+                    })
+                }
+            );
+
+        const saveData =
+            await saveResponse.json();
+
+        console.log(
+            "OCR save response:",
+            saveData
+        );
+
+        if (!saveResponse.ok ||
+            !saveData.success) {
+
+            throw new Error(
+                saveData.message ||
+                "Could not save OCR text."
+            );
+        }
+
+        currentDocumentId =
+            saveData.documentId;
+
+        uploadStatus.textContent =
+            `Scanned PDF processed successfully. ` +
+            `${completeText.length.toLocaleString()} characters extracted.`;
+
+        responseBox.textContent =
+            "Document is ready. Ask your question.";
+
+    } catch (error) {
+
+        console.error(
+            "OCR error:",
+            error
+        );
+
+        uploadStatus.textContent =
+            `OCR failed: ${error.message}`;
 
     } finally {
 
-        await worker.terminate();
-    }
-
-
-    // --------------------------------------------------------
-    // COMBINE REAL OCR TEXT
-    // --------------------------------------------------------
-
-    const completeText =
-        pageTexts
-            .join("\n\n")
-            .trim();
-
-
-    console.log(
-        "================================"
-    );
-
-    console.log(
-        "OCR COMPLETE"
-    );
-
-    console.log(
-        "Pages:",
-        totalPages
-    );
-
-    console.log(
-        "Pages with text:",
-        pageTexts.length
-    );
-
-    console.log(
-        "OCR characters:",
-        totalCharacters
-    );
-
-    console.log(
-        "================================"
-    );
-
-
-    // --------------------------------------------------------
-    // VALIDATION
-    // --------------------------------------------------------
-
-    if (
-        completeText.length < 100
-    ) {
-
-        throw new Error(
-            "OCR could not read enough text from this PDF. The PDF may have very low-quality/scanned pages."
-        );
-    }
-
-
-    return completeText;
-}
-
-
-// ============================================================
-// SAVE OCR TEXT
-// ============================================================
-
-async function saveOCRText(
-    file,
-    extractedText
-) {
-
-    uploadStatus.textContent =
-        "Saving OCR text to database...";
-
-
-    const response =
-        await fetch(
-            `${API_BASE}/api/documents/text`,
-            {
-
-                method:
-                    "POST",
-
-                headers: {
-
-                    "Content-Type":
-                        "application/json"
-                },
-
-                body:
-                    JSON.stringify({
-
-                        fileName:
-                            file.name,
-
-                        text:
-                            extractedText
-                    })
-            }
-        );
-
-
-    let data;
-
-
-    try {
-
-        data =
-            await response.json();
-
-    } catch {
-
-        throw new Error(
-            "Invalid response from backend."
-        );
-    }
-
-
-    if (
-        !response.ok
-    ) {
-
-        throw new Error(
-            data.message ||
-            "OCR save failed."
-        );
-    }
-
-
-    return data;
-}
-
-
-// ============================================================
-// UPLOAD BUTTON
-// ============================================================
-
-uploadButton.addEventListener(
-    "click",
-    async () => {
-
-        const file =
-            fileInput.files[0];
-
-
-        if (!file) {
-
-            uploadStatus.textContent =
-                "Please select a PDF.";
-
-            return;
-        }
-
-
-        if (
-            file.type !==
-                "application/pdf" &&
-            !file.name
-                .toLowerCase()
-                .endsWith(".pdf")
-        ) {
-
-            uploadStatus.textContent =
-                "Only PDF files are allowed.";
-
-            return;
-        }
-
-
-        uploadButton.disabled =
-            true;
-
-        askButton.disabled =
-            true;
-
-
-        responseElement.textContent =
-            "AI response will appear here...";
-
-
-        try {
-
-            // ==================================================
-            // NORMAL TEXT EXTRACTION
-            // ==================================================
+        if (worker) {
 
             try {
-
-                const data =
-                    await uploadNormalPDF(
-                        file
-                    );
-
-
-                activeDocumentId =
-                    data.documentId;
-
-
-                uploadStatus.textContent =
-                    `PDF uploaded successfully. ${data.chunksFound} chunks created. Extracted ${data.extractedCharacters} characters.`;
-
-
-                console.log(
-                    "Normal upload:",
-                    data
-                );
-
-
-                /*
-                    IMPORTANT:
-
-                    If extraction is suspiciously small,
-                    run OCR anyway.
-
-                    Example:
-                    148-page PDF + 500 characters
-                    = almost certainly bad extraction.
-                */
-
-                if (
-                    data.extractedCharacters <
-                    5000
-                ) {
-
-                    console.log(
-                        "Low text extraction detected."
-                    );
-
-                    uploadStatus.textContent =
-                        `Only ${data.extractedCharacters} characters were extracted. Starting OCR...`;
-
-
-                    const ocrText =
-                        await performOCR(
-                            file
-                        );
-
-
-                    const saved =
-                        await saveOCRText(
-                            file,
-                            ocrText
-                        );
-
-
-                    activeDocumentId =
-                        saved.documentId;
-
-
-                    uploadStatus.textContent =
-                        `OCR completed successfully. ${saved.chunksFound} chunks created. Extracted ${saved.extractedCharacters} characters.`;
-
-                }
-
-
-                return;
-
+                await worker.terminate();
             } catch (error) {
-
-                // ==============================================
-                // SCANNED PDF
-                // ==============================================
-
-                if (
-                    error.scanned ===
-                    true
-                ) {
-
-                    console.log(
-                        "Scanned PDF detected."
-                    );
-
-
-                    uploadStatus.textContent =
-                        "Scanned PDF detected. Starting OCR...";
-
-
-                    const ocrText =
-                        await performOCR(
-                            file
-                        );
-
-
-                    const saved =
-                        await saveOCRText(
-                            file,
-                            ocrText
-                        );
-
-
-                    activeDocumentId =
-                        saved.documentId;
-
-
-                    uploadStatus.textContent =
-                        `OCR completed successfully. ${saved.chunksFound} chunks created. Extracted ${saved.extractedCharacters} characters.`;
-
-                    return;
-                }
-
-
-                throw error;
+                console.error(error);
             }
-
-
-        } catch (error) {
-
-            console.error(
-                "UPLOAD ERROR:",
-                error
-            );
-
-
-            uploadStatus.textContent =
-                "Upload failed: " +
-                error.message;
-
-
-        } finally {
-
-            uploadButton.disabled =
-                false;
-
-            askButton.disabled =
-                false;
         }
+
+        pdf = null;
     }
-);
+}
 
+// =====================================================
+// CLEAN OCR TEXT
+// =====================================================
 
-// ============================================================
+function cleanOCRText(text) {
+
+    return text
+
+        .replace(/\r/g, "\n")
+
+        // Remove excessive spaces
+        .replace(/[ \t]+/g, " ")
+
+        // Remove excessive blank lines
+        .replace(/\n{4,}/g, "\n\n")
+
+        .trim();
+}
+
+// =====================================================
 // ASK QUESTION
-// ============================================================
+// =====================================================
 
-askButton.addEventListener(
-    "click",
-    async () => {
+askButton.addEventListener("click", async () => {
 
-        const question =
-            questionInput.value.trim();
+    const question =
+        questionInput.value.trim();
 
+    if (!question) {
 
-        if (!question) {
+        responseBox.textContent =
+            "Please enter a question.";
 
-            responseElement.textContent =
-                "Please enter a question.";
+        return;
+    }
 
-            return;
-        }
+    // =================================================
+    // MAKE SURE DOCUMENT EXISTS
+    // =================================================
 
+    if (!currentDocumentId) {
 
-        if (
-            !activeDocumentId
-        ) {
+        await loadLatestDocument();
 
-            await loadLatestDocument();
-        }
+        if (!currentDocumentId) {
 
-
-        if (
-            !activeDocumentId
-        ) {
-
-            responseElement.textContent =
+            responseBox.textContent =
                 "Please upload a PDF first.";
 
             return;
         }
+    }
 
+    try {
 
-        responseElement.textContent =
-            "Searching your study material...";
+        askButton.disabled = true;
 
+        responseBox.textContent =
+            "Searching your document...";
 
-        askButton.disabled =
-            true;
+        // =================================================
+        // SEARCH DOCUMENT
+        // =================================================
 
+        const url =
+            `${API_BASE}/api/documents/search` +
+            `?documentId=${encodeURIComponent(currentDocumentId)}` +
+            `&q=${encodeURIComponent(question)}`;
 
-        try {
+        const response =
+            await fetch(url);
 
-            const url =
-                `${API_BASE}/api/documents/search` +
-                `?documentId=${encodeURIComponent(
-                    activeDocumentId
-                )}` +
-                `&q=${encodeURIComponent(
-                    question
-                )}`;
+        const data =
+            await response.json();
 
+        console.log(
+            "Question response:",
+            data
+        );
 
-            console.log(
-                "Searching:",
-                url
-            );
+        // =================================================
+        // SUCCESS
+        // =================================================
 
+        if (response.ok && data.success) {
 
-            const response =
-                await fetch(
-                    url
-                );
-
-
-            let data;
-
-
-            try {
-
-                data =
-                    await response.json();
-
-            } catch {
-
-                throw new Error(
-                    "Invalid response from backend."
-                );
-            }
-
-
-            if (
-                !response.ok
-            ) {
-
-                throw new Error(
-                    data.message ||
-                    "Search failed."
-                );
-            }
-
-
-            responseElement.textContent =
+            responseBox.textContent =
                 data.answer ||
                 "No answer found.";
 
-
-            console.log(
-                "Search response:",
-                data
-            );
-
-
-        } catch (error) {
-
-            console.error(
-                "QUESTION ERROR:",
-                error
-            );
-
-
-            responseElement.textContent =
-                "Error: " +
-                error.message;
-
-
-        } finally {
-
-            askButton.disabled =
-                false;
+            return;
         }
+
+        // =================================================
+        // NO ANSWER
+        // =================================================
+
+        responseBox.textContent =
+            data.message ||
+            "No relevant information found.";
+
+    } catch (error) {
+
+        console.error(
+            "Question error:",
+            error
+        );
+
+        responseBox.textContent =
+            "Could not connect to the backend.";
+
+    } finally {
+
+        askButton.disabled = false;
     }
-);
+});
 
-
-// ============================================================
-// ENTER KEY
-// ============================================================
+// =====================================================
+// ENTER KEY → ASK
+// =====================================================
 
 questionInput.addEventListener(
     "keydown",
-    event => {
+    (event) => {
 
-        if (
-            event.key ===
-            "Enter"
-        ) {
+        if (event.key === "Enter") {
+
+            event.preventDefault();
 
             askButton.click();
         }
     }
 );
 
-
-// ============================================================
+// =====================================================
 // START
-// ============================================================
+// =====================================================
 
-loadLatestDocument();
+initialize();
